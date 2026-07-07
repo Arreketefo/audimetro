@@ -1,0 +1,12 @@
+.venv/
+vendor/
+__pycache__/
+*.py[cod]
+.env
+*.db
+*.db-wal
+*.db-shm
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/

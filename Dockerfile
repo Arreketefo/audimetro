@@ -1,0 +1,25 @@
+FROM python:3.12-slim
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+
+# Dependency layer (vendor/ holds the private radar-core path dependency:
+# it must exist BEFORE the first sync).
+COPY pyproject.toml uv.lock ./
+COPY vendor ./vendor
+RUN uv sync --frozen --no-dev --no-install-project
+
+COPY . .
+RUN uv sync --frozen --no-dev
+
+# From here on, uv run must NOT re-sync: it would pull dev deps from PyPI
+# at container runtime (crash-loop without network, slow healthchecks).
+ENV UV_NO_SYNC=1
+
+# Sello de build para /version (lo inyecta make build/deploy)
+ARG BUILD_INFO=dev
+ENV BUILD_INFO=$BUILD_INFO
+
+CMD ["uv", "run", "python", "-m", "audimetro"]

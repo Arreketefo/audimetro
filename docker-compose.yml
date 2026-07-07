@@ -1,0 +1,23 @@
+services:
+  audimetro:
+    build:
+      context: .
+      args:
+        BUILD_INFO: ${BUILD_INFO:-dev}
+    image: audimetro:latest
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Always the persistent volume, whatever the shared .env says.
+      AUDIMETRO_DB_PATH: /data/audimetro.db
+    volumes:
+      - audimetro-data:/data
+    healthcheck:
+      test: ["CMD", "uv", "run", "python", "-m", "audimetro.healthcheck"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+volumes:
+  audimetro-data:
