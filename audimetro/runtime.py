@@ -17,6 +17,7 @@ from radar_core.notifiers import TelegramTransport
 
 from audimetro.config import Settings
 from audimetro.contracts import Source
+from audimetro.render import render_stats
 from audimetro.scheduler import LAST_TICK_KEY, SENT_DATE_KEY, TickStats, tick
 from audimetro.sources.instagram import InstagramSource
 from audimetro.sources.tiktok import TikTokSource
@@ -132,26 +133,14 @@ class Runtime:
             platforms = wanted or [s.platform for s in self.sources]
             if not platforms:
                 return "sin fuentes configuradas"
-            lines: list[str] = []
-            for platform in platforms:
-                rows = await self.store.latest_for_platform(platform, limit)
-                lines.append(f"{platform} (top {len(rows)} por views):")
-                if not rows:
-                    lines.append("  (sin capturas aún)")
-                for title, _url, kind, snap in rows:
-                    short_title = title if len(title) <= 40 else title[:39] + "…"
-                    extras = "".join(
-                        f" · {value}{icon}"
-                        for value, icon in ((snap.likes, "👍"), (snap.comments, "💬"),
-                                            (snap.shares, "↗️"), (snap.saves, "🔖"),
-                                            (snap.watch_min, "⏱"),
-                                            (snap.subs_gained, " subs"))
-                        if value
-                    )
-                    if snap.avg_view_s:
-                        extras += f" · ⌀{snap.avg_view_s // 60}:{snap.avg_view_s % 60:02d}"
-                    lines.append(f"  [{kind}] {short_title} — {snap.views} views{extras}")
-            return "\n".join(lines)
+            sections = [(p, await self.store.latest_for_platform(p, limit))
+                        for p in platforms]
+            # BotCommander manda las respuestas en texto plano (sin parse_mode),
+            # así que para tener títulos clicables y el mismo look que el informe
+            # diario nos auto-enviamos por el transporte Markdown y devolvemos ""
+            # (respuesta vacía = el core no manda nada).
+            await self._send_messages(render_stats(sections, limit))
+            return ""
 
         async def hora(args: str) -> str:
             # Azúcar sobre /set digest_hour: mismo validador, cero deriva.
@@ -170,6 +159,19 @@ class Runtime:
                     "(sustituye al informe programado de hoy)")
 
         return {"stats": stats, "hora": hora, "informe": informe}
+
+    async def _send_messages(self, messages: list[str]) -> None:
+        """Envía cada trozo por el transporte, con la misma red de seguridad que
+        el informe diario: si el markup rompe el parse de Telegram, reintenta en
+        texto plano. Nunca propaga (un fallo de red no debe tumbar el poller)."""
+        for message in messages:
+            try:
+                await self.sender.send_text(message)
+            except Exception:
+                try:
+                    await self.sender.send_text(message, markdown=False)
+                except Exception:
+                    log.exception("envío de /stats falló")
 
     async def _status(self) -> str:
         last_sent = await self.store.get_meta(SENT_DATE_KEY) or "nunca"

@@ -100,5 +100,5 @@ async def test_second_day_reports_deltas(store: Store) -> None:
                sender, force=True)
     await tick(cfg(digest_hour=0, min_delta_views=10), store,
                [FakeSource("youtube", [stat(views=250)])], sender, force=True)
-    assert "(+150)" in sender.messages[1]
-    assert "🔥 Movimiento 24h" in sender.messages[1]
+    assert "▲ +150" in sender.messages[1]
+    assert "🔥 *Suben (24 h)*" in sender.messages[1]

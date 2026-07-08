@@ -28,17 +28,31 @@ async def test_hora_command_sets_override(store: Store) -> None:
     await runtime.aclose()
 
 
-async def test_stats_command_lists_pieces(store: Store) -> None:
+class SpySender:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    async def send_text(self, text: str, markdown: bool = True) -> None:
+        self.messages.append(text)
+
+
+async def test_stats_command_sends_rich_message(store: Store) -> None:
     await store.record(
         [stat(video_id="a", views=99, likes=5, title="Corto famoso", kind="short"),
          stat(platform="tiktok", video_id="t1", views=10, title="TT")],
         "2026-07-06 08:00:00",
     )
     runtime = Runtime(cfg(), store)
+    runtime.sender = SpySender()  # type: ignore[assignment]
     commands = runtime._domain_commands()
+    # /stats se auto-envía por el transporte Markdown y devuelve "" (el core no
+    # manda las respuestas con parse_mode, así no habría títulos clicables).
     reply = await commands["stats"]("yt 5")
-    assert "youtube" in reply and "Corto famoso — 99 views · 5👍" in reply
-    assert "tiktok" not in reply
+    assert reply == ""
+    [message] = runtime.sender.messages  # type: ignore[attr-defined]
+    assert "▶️ *YouTube*" in message and "Corto famoso" in message
+    assert "*99* views · 👍 5" in message
+    assert "TikTok" not in message and "«TT»" not in message  # filtro yt
     reply_all = await commands["stats"]("")
     # Sin fuentes configuradas, /stats sin filtro no tiene qué listar.
     assert reply_all == "sin fuentes configuradas"
