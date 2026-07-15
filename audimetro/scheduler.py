@@ -71,8 +71,15 @@ async def tick(
             await store.set_meta(LAST_TICK_KEY, utcnow_str())
             return stats
 
-    previous = await store.latest_snapshots()
-    had_history = await store.platforms_with_history()
+    # Snapshot de referencia: el último ANTERIOR a hoy. Excluir las capturas de
+    # hoy hace los deltas estables ante reintentos y /informe forzados (si no,
+    # un segundo cómputo el mismo día compararía contra la captura de hace
+    # minutos y todos los deltas saldrían ~0). had_history usa el MISMO corte:
+    # si contara las capturas de hoy, el retick del PRIMER día vería "historia"
+    # con previous vacío y reportaría todas las piezas como nuevas.
+    day_start = f"{today} 00:00:00"
+    previous = await store.latest_snapshots(before=day_start)
+    had_history = await store.platforms_with_history(before=day_start)
     captured_at = utcnow_str()
 
     async def capture(source: Source) -> SourceResult:
@@ -96,9 +103,13 @@ async def tick(
                      cfg.min_delta_views, cfg.top_movers)
     messages = render_report(report, now)
 
-    # At-most-once (disciplina del core): el día queda marcado ANTES de enviar
-    # — un fallo parcial de Telegram no provoca duplicados en el retick.
-    await store.set_meta(SENT_DATE_KEY, today)
+    # At-most-once REAL: el día se marca tras el PRIMER envío que llega (un
+    # retick no duplica), pero si NO llegó NINGUNO (Telegram caído, token roto)
+    # el día queda sin marcar y el siguiente tick reintenta el informe entero
+    # — antes se marcaba antes de enviar y un fallo transitorio perdía el día
+    # en silencio con el healthcheck en verde.
+    if not messages:
+        await store.set_meta(SENT_DATE_KEY, today)
     for message in messages:
         try:
             try:
@@ -107,11 +118,17 @@ async def tick(
                 # Red de seguridad: si algún resto de markup rompe el parse de
                 # Telegram, mejor el informe en texto plano que ninguno.
                 await sender.send_text(message, markdown=False)
-            stats.messages_sent += 1
         except Exception:
             log.exception("envío del informe falló (mensaje %d/%d)",
                           stats.messages_sent + 1, len(messages))
             break
+        # Fuera del try de envío: un fallo de la DB aquí no debe contarse como
+        # "envío fallido". Tradeoff asumido: si falla un mensaje POSTERIOR al
+        # primero, el resto del informe de hoy se pierde (el día ya quedó
+        # marcado) — preferible a duplicar el informe entero en cada retick.
+        if stats.messages_sent == 0:
+            await store.set_meta(SENT_DATE_KEY, today)
+        stats.messages_sent += 1
 
     pruned = await store.prune(cfg.snapshot_retention_days)
     await store.set_meta(LAST_TICK_KEY, utcnow_str())

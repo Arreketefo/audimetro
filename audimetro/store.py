@@ -61,21 +61,34 @@ class Store(BaseStore):
         )
         return {str(r["video_id"]): str(r["kind"]) for r in await cur.fetchall()}
 
-    async def platforms_with_history(self) -> set[str]:
+    async def platforms_with_history(self, before: str | None = None) -> set[str]:
         """Plataformas con al menos una captura (para no tratar la primera
-        pasada como una riada de piezas 'nuevas')."""
-        cur = await self._conn.execute("SELECT DISTINCT platform FROM snapshots")
+        pasada como una riada de piezas 'nuevas'). Con `before`, solo capturas
+        anteriores a ese instante — debe usar el MISMO corte que
+        latest_snapshots para que 'hay historia' implique 'hay previous'."""
+        where = "WHERE captured_at < ?" if before else ""
+        params = (before,) if before else ()
+        cur = await self._conn.execute(
+            f"SELECT DISTINCT platform FROM snapshots {where}", params)
         return {str(r["platform"]) for r in await cur.fetchall()}
 
-    async def latest_snapshots(self) -> dict[tuple[str, str], Snapshot]:
+    async def latest_snapshots(
+        self, before: str | None = None
+    ) -> dict[tuple[str, str], Snapshot]:
+        """Último snapshot por pieza; con `before` (timestamp TIMESTAMP_FMT),
+        el último ESTRICTAMENTE anterior a ese instante (referencia estable de
+        deltas ante reintentos o informes forzados el mismo día)."""
+        where = "WHERE captured_at < ?" if before else ""
+        params = (before,) if before else ()
         # Bare column + MAX(): SQLite devuelve la fila del máximo.
         cur = await self._conn.execute(
-            """
+            f"""
             SELECT platform, video_id, MAX(captured_at) AS captured_at,
                    views, likes, comments, shares, saves,
                    watch_min, avg_view_s, subs_gained
-            FROM snapshots GROUP BY platform, video_id
-            """
+            FROM snapshots {where} GROUP BY platform, video_id
+            """,
+            params,
         )
         return {
             (str(r["platform"]), str(r["video_id"])): _snapshot(r)

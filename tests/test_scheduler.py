@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from conftest import cfg, stat
 
@@ -95,10 +95,33 @@ async def test_markdown_failure_falls_back_to_plain_text(store: Store) -> None:
 
 
 async def test_second_day_reports_deltas(store: Store) -> None:
+    # La captura de referencia se graba con timestamp de AYER: los deltas se
+    # computan contra el último snapshot anterior a hoy (las capturas de hoy
+    # no cuentan — reintentos e informes forzados no deben poner los deltas a 0).
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+    await store.record([stat(views=100)], yesterday)
     sender = FakeSender()
-    await tick(cfg(digest_hour=0), store, [FakeSource("youtube", [stat(views=100)])],
-               sender, force=True)
     await tick(cfg(digest_hour=0, min_delta_views=10), store,
                [FakeSource("youtube", [stat(views=250)])], sender, force=True)
-    assert "▲ +150" in sender.messages[1]
-    assert "🔥 *Suben (24 h)*" in sender.messages[1]
+    assert "▲ +150" in sender.messages[0]
+    assert "🔥 *Suben (24 h)*" in sender.messages[0]
+
+
+class BrokenSender:
+    async def send_text(self, text: str, markdown: bool = True) -> None:
+        raise RuntimeError("telegram caído")
+
+
+async def test_total_send_failure_retries_next_tick(store: Store) -> None:
+    """Regresión: el día se marcaba ANTES de enviar, y un fallo transitorio de
+    Telegram perdía el informe entero en silencio. Ahora el día solo se marca
+    tras el primer envío OK: el siguiente tick reintenta."""
+    source = FakeSource("youtube", [stat()])
+    failed = await tick(cfg(digest_hour=0), store, [source], BrokenSender())
+    assert failed.messages_sent == 0
+    assert await store.get_meta(SENT_DATE_KEY) is None
+
+    sender = FakeSender()
+    retry = await tick(cfg(digest_hour=0), store, [source], sender)
+    assert not retry.skipped and retry.messages_sent >= 1
+    assert await store.get_meta(SENT_DATE_KEY) == datetime.now(UTC).strftime("%Y-%m-%d")
