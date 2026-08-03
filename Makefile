@@ -10,10 +10,12 @@ help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n", $$1, $$2}'
 
-vendor-core:  ## Refresh the vendored radar-core snapshot (private lib)
+vendor-core:  ## Refresh the reviewed radar-core snapshot
+	mkdir -p vendor
 	rsync -a --delete \
 		--exclude '.git' --exclude '.venv' --exclude 'tests' \
 		--exclude 'uv.lock' --exclude '__pycache__' --exclude '.*_cache' \
+		--include 'README.md' \
 		--exclude '*.md' \
 		../radar-core/ vendor/radar-core/
 
@@ -31,6 +33,16 @@ test:  ## Run tests
 
 lint:  ## Lint + typecheck
 	uv run ruff check . && uv run mypy audimetro
+
+package:  ## Build wheel + source distribution
+	uv build
+
+check: vendor-core  ## Run all local quality gates
+	uv sync --locked --dev
+	uv run pytest -q
+	uv run ruff check .
+	uv run mypy audimetro
+	uv build
 
 build: vendor-core  ## Build the image
 	BUILD_INFO=$(BUILD_INFO) $(COMPOSE) build

@@ -1,11 +1,11 @@
 FROM python:3.12-slim
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
 
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 
-# Dependency layer (vendor/ holds the private radar-core path dependency:
+# Dependency layer (vendor/ holds the reviewed radar-core path dependency:
 # it must exist BEFORE the first sync).
 COPY pyproject.toml uv.lock ./
 COPY vendor ./vendor
